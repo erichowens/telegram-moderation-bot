@@ -373,7 +373,7 @@ Don't allow repetitive spam messages.'''
             self.status_bar.config(text="Bot started successfully!")
             
             self.log_activity("Bot started and monitoring channels")
-        self.update_stats()
+            self.update_stats()
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start bot:\n{str(e)}")

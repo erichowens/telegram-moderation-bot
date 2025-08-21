@@ -142,8 +142,7 @@ class ContentModerator:
                 logger.error(f"AI moderation failed, falling back to rules: {e}")
         
         # Fall back to rule-based moderation
-        text_lower = text.lower()
-        result = await self._moderate_text_rules(text_lower)
+        result = await self._moderate_text_rules(text)
         self.cache[cache_key] = result
         return result
     
@@ -164,8 +163,9 @@ class ContentModerator:
         
         return ModerationResult(is_violation=False, confidence=0.0)
     
-    async def _moderate_text_rules(self, text_lower: str) -> ModerationResult:
+    async def _moderate_text_rules(self, text: str) -> ModerationResult:
         """Rule-based text moderation fallback."""
+        text_lower = text.lower()
         
         # Check for spam
         spam_score = self.check_keywords(text_lower, self.spam_keywords)
@@ -184,7 +184,7 @@ class ContentModerator:
         
         # Check for harassment
         harassment_score = self.check_keywords(text_lower, self.harassment_keywords)
-        if harassment_score >= 0.7:
+        if harassment_score >= 0.6:
             return ModerationResult(
                 is_violation=True,
                 confidence=min(harassment_score, 0.95),
@@ -302,8 +302,9 @@ class ContentModerator:
         if matches == 0:
             return 0.0
         
-        # Calculate confidence based on keyword density
-        confidence = (matches / total_keywords) * 0.8 + 0.2
+        # Calculate confidence - more matches = higher confidence
+        # Base confidence of 0.6 for any match, then increase with more matches
+        confidence = 0.6 + (matches / total_keywords) * 0.35
         return min(confidence, 0.95)
     
     def is_repetitive(self, text: str) -> bool:
@@ -377,7 +378,10 @@ class ContentModerator:
     
     def add_custom_rule_from_text(self, rule_text: str) -> Dict[str, Any]:
         """Parse natural language rule and add to custom rules."""
-        from .rule_parser import RuleDocumentParser
+        try:
+            from .rule_parser import RuleDocumentParser
+        except ImportError:
+            from rule_parser import RuleDocumentParser
         
         parser = RuleDocumentParser()
         parsed_rules = parser.parse_document(rule_text)

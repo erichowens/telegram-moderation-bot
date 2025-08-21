@@ -6,7 +6,10 @@
       "Bash(git commit:*)",
       "Bash(gh repo create:*)",
       "Bash(gh auth:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python -m pytest tests/test_moderation.py::TestContentModerator::test_spam_detection_keywords -v)",
+      "Bash(python:*)",
+      "Bash(pip install:*)"
     ],
     "deny": [],
     "ask": []

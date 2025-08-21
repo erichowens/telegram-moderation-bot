@@ -9,8 +9,12 @@ from typing import Optional, Callable, Dict, Any
 from telegram import Update, Message
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-from .moderation import ContentModerator, ModerationResult
-from .config import Config
+try:
+    from .moderation import ContentModerator, ModerationResult
+    from .config import Config
+except ImportError:
+    from moderation import ContentModerator, ModerationResult
+    from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +125,7 @@ class TelegramModerationBot:
             if message.video.duration > 300:  # 5 minutes
                 result = ModerationResult(
                     is_violation=True,
-                    confidence=0.6,
+                    confidence=0.7,
                     reason="Video too long",
                     category="policy"
                 )
