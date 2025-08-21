@@ -5,6 +5,7 @@ A user-friendly Telegram bot that automatically moderates your channels and grou
 ## 🎯 For Non-Technical Users
 
 **[📖 Read the User Guide](USER_GUIDE.md)** - Step-by-step instructions for beginners
+**[📋 View Changelog](CHANGELOG.md)** - See what's new and fixed
 
 This bot protects your Telegram channels by automatically:
 - 🚫 Removing spam and ads
