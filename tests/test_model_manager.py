@@ -303,6 +303,18 @@ class TestModelManager:
 class TestModelManagerEdgeCases:
     """Test edge cases and error conditions."""
     
+    @pytest.fixture
+    def temp_models_dir(self):
+        """Create a temporary directory for testing."""
+        temp_dir = tempfile.mkdtemp()
+        yield temp_dir
+        shutil.rmtree(temp_dir)
+    
+    @pytest.fixture
+    def model_manager(self, temp_models_dir):
+        """Create a ModelManager instance with temporary directory."""
+        return ModelManager(models_dir=temp_models_dir)
+    
     def test_empty_models_directory(self):
         """Test behavior with non-existent models directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
