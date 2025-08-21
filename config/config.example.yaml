@@ -1,0 +1,67 @@
+# Telegram Bot Configuration
+telegram:
+  token: "YOUR_BOT_TOKEN_HERE"
+  # Optional: specific chat IDs where bot should operate
+  allowed_chats: []
+
+# Moderation Configuration
+moderation:
+  # Model paths (update these to point to your local models)
+  text_model:
+    type: "transformers"  # or "ollama", "llama-cpp"
+    path: "microsoft/DialoGPT-medium"
+    
+  vision_model:
+    type: "transformers"
+    path: "Salesforce/blip-image-captioning-base"
+    
+  multimodal_model:
+    type: "transformers"  
+    path: "microsoft/git-base-coco"
+
+# Policy Configuration
+policies:
+  # Text-based violations
+  - name: "spam"
+    description: "Repetitive or promotional content"
+    threshold: 0.8
+    action: "delete"  # delete, warn, flag
+    
+  - name: "harassment"
+    description: "Bullying, threats, or personal attacks"
+    threshold: 0.7
+    action: "delete"
+    
+  - name: "hate_speech"
+    description: "Discriminatory language"
+    threshold: 0.9
+    action: "delete"
+    
+  - name: "misinformation"
+    description: "False or misleading information"
+    threshold: 0.6
+    action: "flag"
+
+  # Image/Video violations  
+  - name: "nsfw"
+    description: "Adult or inappropriate content"
+    threshold: 0.9
+    action: "delete"
+    
+  - name: "violence"
+    description: "Graphic violence or gore"
+    threshold: 0.8
+    action: "delete"
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/bot.log"
+  max_size: "10MB"
+  backup_count: 5
+
+# Performance Settings
+performance:
+  max_concurrent_requests: 10
+  request_timeout: 30
+  model_cache_size: 3
