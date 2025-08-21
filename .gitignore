@@ -45,6 +45,12 @@ config/secrets.yaml
 .env.local
 .env.production
 
+# Internal documents (not for public repo)
+ROADMAP_INTERNAL.md
+BUSINESS_PLAN.md
+TECHNICAL_SPECS.md
+*_INTERNAL.*
+
 # Model files (these can be large)
 models/
 *.bin

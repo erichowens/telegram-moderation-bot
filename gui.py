@@ -261,6 +261,35 @@ To get started:
             self.action_vars[action_name] = var
             ttk.Checkbutton(actions_frame, text=action_name, variable=var).pack(anchor="w", pady=2)
         
+        # Custom Rules section
+        custom_rules_frame = ttk.LabelFrame(self.settings_tab, text="Custom Rules", padding=10)
+        custom_rules_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        ttk.Label(custom_rules_frame, text="Write your own moderation rules in plain English:").pack(anchor="w")
+        
+        # Rule document text area
+        self.custom_rules_text = scrolledtext.ScrolledText(custom_rules_frame, height=8, width=80)
+        self.custom_rules_text.pack(fill="both", expand=True, pady=5)
+        
+        # Example text
+        example_rules = '''Example rules:
+
+Don't allow "buy crypto" or "get rich quick" messages.
+Block all links to suspicious-site.com.
+Messages can't be longer than 500 characters.
+No excessive all caps.
+Don't allow repetitive spam messages.'''
+        
+        self.custom_rules_text.insert("1.0", example_rules)
+        
+        # Rule buttons
+        rule_buttons = ttk.Frame(custom_rules_frame)
+        rule_buttons.pack(fill="x", pady=5)
+        
+        ttk.Button(rule_buttons, text="Parse & Add Rules", command=self.parse_custom_rules).pack(side="left")
+        ttk.Button(rule_buttons, text="Clear Rules", command=self.clear_custom_rules).pack(side="left", padx=5)
+        ttk.Button(rule_buttons, text="Load Example", command=self.load_example_rules).pack(side="left", padx=5)
+        
         # Save button
         ttk.Button(self.settings_tab, text="Save Settings", command=self.save_settings).pack(pady=20)
     
@@ -497,6 +526,76 @@ To get started:
         
         # Schedule next update
         self.root.after(5000, self.update_stats)  # Update every 5 seconds
+    
+    def parse_custom_rules(self):
+        """Parse custom rules from text area."""
+        rule_text = self.custom_rules_text.get("1.0", tk.END).strip()
+        
+        if not rule_text or rule_text == self.get_example_rules():
+            messagebox.showwarning("No Rules", "Please enter some custom rules first.")
+            return
+        
+        try:
+            # Parse rules using the rule parser
+            from src.rule_parser import RuleDocumentParser
+            parser = RuleDocumentParser()
+            parsed_rules = parser.parse_document(rule_text)
+            
+            if parsed_rules:
+                # Save parsed rules
+                parser.export_rules(parsed_rules, "config/custom_rules.json")
+                
+                # Show success message
+                messagebox.showinfo(
+                    "Rules Parsed", 
+                    f"Successfully parsed {len(parsed_rules)} rules:\n\n" +
+                    "\n".join([f"• {rule['reason']}" for rule in parsed_rules[:5]]) +
+                    ("\n• ...and more" if len(parsed_rules) > 5 else "")
+                )
+                
+                # Update log
+                self.log_activity(f"Added {len(parsed_rules)} custom moderation rules")
+            else:
+                messagebox.showwarning("No Rules Found", "Could not parse any rules from the text. Please check the format.")
+                
+        except Exception as e:
+            messagebox.showerror("Parse Error", f"Failed to parse rules:\n{str(e)}")
+    
+    def clear_custom_rules(self):
+        """Clear custom rules text area."""
+        self.custom_rules_text.delete("1.0", tk.END)
+    
+    def load_example_rules(self):
+        """Load example rules into text area."""
+        from src.rule_parser import RuleExample
+        
+        # Show choice dialog
+        example_choice = messagebox.askyesnocancel(
+            "Load Example", 
+            "Choose example type:\n\nYes = Gaming Server Rules\nNo = Professional Group Rules\nCancel = Family Chat Rules"
+        )
+        
+        if example_choice is True:
+            example_text = RuleExample.get_gaming_server_rules()
+        elif example_choice is False:
+            example_text = RuleExample.get_professional_group_rules()
+        elif example_choice is None:
+            example_text = RuleExample.get_family_chat_rules()
+        else:
+            return
+        
+        self.custom_rules_text.delete("1.0", tk.END)
+        self.custom_rules_text.insert("1.0", example_text)
+    
+    def get_example_rules(self) -> str:
+        """Get the default example rules text."""
+        return '''Example rules:
+
+Don't allow "buy crypto" or "get rich quick" messages.
+Block all links to suspicious-site.com.
+Messages can't be longer than 500 characters.
+No excessive all caps.
+Don't allow repetitive spam messages.'''
     
     def run(self):
         """Start the GUI application."""
