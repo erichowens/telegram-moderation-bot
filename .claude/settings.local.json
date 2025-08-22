@@ -9,7 +9,13 @@
       "Bash(git push:*)",
       "Bash(python -m pytest tests/test_moderation.py::TestContentModerator::test_spam_detection_keywords -v)",
       "Bash(python:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(find:*)",
+      "Bash(touch:*)",
+      "Bash(chmod:*)",
+      "WebSearch",
+      "Bash(mv:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

@@ -15,6 +15,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from bot import TelegramModerationBot
 from moderation import ModerationResult
+try:
+    from advanced_moderation import AdvancedModerationSystem
+    HAS_ADVANCED = True
+except ImportError:
+    HAS_ADVANCED = False
 
 
 class TestTelegramBot:
@@ -172,8 +177,9 @@ class TestTelegramBot:
         mock_update = Mock()
         mock_message = Mock()
         mock_video = Mock()
-        mock_video.duration = 600  # 10 minutes - should trigger policy violation
+        mock_video.duration = 650  # Over 10 minutes - should trigger policy violation
         mock_video_file = Mock()
+        mock_video_file.download_as_bytearray = AsyncMock(return_value=b'fake_video_data')
         mock_video.get_file = AsyncMock(return_value=mock_video_file)
         
         # Set up mock message with proper structure
@@ -451,11 +457,9 @@ class TestTelegramBotConfiguration:
              patch('bot.Config', side_effect=Exception("Config error")), \
              patch('bot.ContentModerator') as mock_moderator_class:
             
-            # Should still create bot with fallback config
-            bot = TelegramModerationBot("test_token")
-            
-            # Should create moderator with empty config
-            mock_moderator_class.assert_called_with({})
+            # Should raise RuntimeError when config fails
+            with pytest.raises(RuntimeError, match="Cannot initialize bot without valid configuration"):
+                bot = TelegramModerationBot("test_token")
     
     def test_handler_setup(self):
         """Test that message handlers are properly configured."""
@@ -521,6 +525,191 @@ class TestTelegramBotPerformance:
             
             # Test passes if no memory errors occur
             assert True
+
+
+class TestAdvancedModerationIntegration:
+    """Test integration of advanced moderation features with the bot."""
+    
+    @pytest.fixture
+    def bot_with_advanced(self):
+        """Create a bot with advanced moderation enabled."""
+        with patch('bot.Application'), \
+             patch('bot.ContentModerator') as mock_moderator, \
+             patch('bot.HAS_ADVANCED', True), \
+             patch('bot.AdvancedModerationSystem') as mock_advanced:
+            
+            mock_advanced_instance = Mock()
+            mock_advanced_instance.initialize = AsyncMock()
+            mock_advanced.return_value = mock_advanced_instance
+            
+            bot = TelegramModerationBot("test_token")
+            bot.advanced_moderator = mock_advanced_instance
+            
+            return bot, mock_advanced_instance
+    
+    @pytest.mark.asyncio
+    async def test_advanced_image_moderation(self, bot_with_advanced):
+        """Test that advanced image moderation is used when available."""
+        bot, mock_advanced = bot_with_advanced
+        
+        # Mock advanced moderation result
+        mock_advanced.moderate_image = AsyncMock(return_value={
+            'is_violation': True,
+            'confidence': 0.9,
+            'description': 'Inappropriate content detected',
+            'detected_objects': ['person'],
+            'safety_scores': {'sexual': 0.8},
+            'action': 'delete'
+        })
+        
+        # Create mock photo message
+        mock_update = Mock()
+        mock_message = Mock()
+        mock_photo = Mock()
+        mock_photo.get_file = AsyncMock()
+        mock_photo.get_file.return_value.download_as_bytearray = AsyncMock(
+            return_value=bytearray(b"fake_image_data")
+        )
+        mock_message.photo = [mock_photo]
+        mock_message.delete = AsyncMock()
+        mock_message.from_user = Mock(id=123, username="testuser")
+        mock_message.chat = Mock(id=456, title="Test Group")
+        mock_update.message = mock_message
+        mock_context = Mock()
+        
+        await bot.handle_photo_message(mock_update, mock_context)
+        
+        # Should use advanced moderation
+        mock_advanced.moderate_image.assert_called_once()
+        assert bot.stats["images_analyzed"] == 1
+        assert bot.stats["violations_found"] == 1
+        mock_message.delete.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_threat_pattern_detection(self, bot_with_advanced):
+        """Test that messages are tracked for pattern detection."""
+        bot, mock_advanced = bot_with_advanced
+        
+        # Mock pattern detection
+        mock_advanced.track_message = Mock()
+        mock_advanced.check_threat_patterns = Mock(return_value=[
+            {
+                'type': 'coordinated_spam',
+                'confidence': 0.85,
+                'affected_users': ['user1', 'user2', 'user3'],
+                'evidence': [],
+                'recommended_action': 'ban_users'
+            }
+        ])
+        
+        # Mock basic moderation
+        bot.moderator.moderate_text = AsyncMock(
+            return_value=ModerationResult(False, 0.1)
+        )
+        
+        # Send multiple messages
+        for i in range(3):
+            mock_update = Mock()
+            mock_message = Mock()
+            mock_message.text = "Buy crypto now!"
+            mock_message.from_user = Mock(id=i, username=f"user{i}")
+            mock_message.chat = Mock(id=456, title="Test Group")
+            mock_update.message = mock_message
+            mock_context = Mock()
+            
+            await bot.handle_text_message(mock_update, mock_context)
+        
+        # Should track all messages
+        assert mock_advanced.track_message.call_count == 3
+        assert mock_advanced.check_threat_patterns.call_count == 3
+        assert bot.stats["patterns_detected"] == 3  # One pattern detected per message
+    
+    @pytest.mark.asyncio
+    async def test_advanced_moderation_fallback(self, bot_with_advanced):
+        """Test fallback to basic moderation when advanced fails."""
+        bot, mock_advanced = bot_with_advanced
+        
+        # Make advanced moderation fail
+        mock_advanced.moderate_image = AsyncMock(
+            side_effect=Exception("Model loading failed")
+        )
+        
+        # Mock basic moderation
+        bot.moderator.moderate_image = AsyncMock(
+            return_value=ModerationResult(
+                is_violation=True,
+                confidence=0.7,
+                reason="Large file size",
+                category="spam"
+            )
+        )
+        
+        # Create mock photo message
+        mock_update = Mock()
+        mock_message = Mock()
+        mock_photo = Mock()
+        mock_photo.get_file = AsyncMock()
+        mock_photo.get_file.return_value.download_as_bytearray = AsyncMock(
+            return_value=bytearray(b"fake_image_data")
+        )
+        mock_message.photo = [mock_photo]
+        mock_message.reply_text = AsyncMock()
+        mock_message.from_user = Mock(id=123, username="testuser")
+        mock_message.chat = Mock(id=456, title="Test Group")
+        mock_update.message = mock_message
+        mock_context = Mock()
+        
+        await bot.handle_photo_message(mock_update, mock_context)
+        
+        # Should fall back to basic moderation
+        bot.moderator.moderate_image.assert_called_once()
+        assert bot.stats["violations_found"] == 1
+    
+    def test_stats_include_advanced_metrics(self, bot_with_advanced):
+        """Test that stats include advanced moderation metrics."""
+        bot, mock_advanced = bot_with_advanced
+        
+        # Set some advanced stats
+        bot.stats["images_analyzed"] = 10
+        bot.stats["patterns_detected"] = 5
+        
+        stats = bot.get_stats()
+        
+        assert "images_analyzed" in stats
+        assert stats["images_analyzed"] == 10
+        assert "patterns_detected" in stats
+        assert stats["patterns_detected"] == 5
+    
+    @pytest.mark.asyncio
+    async def test_advanced_moderation_disabled(self):
+        """Test bot works without advanced moderation."""
+        with patch('bot.Application'), \
+             patch('bot.ContentModerator') as mock_moderator, \
+             patch('bot.HAS_ADVANCED', False):
+            
+            bot = TelegramModerationBot("test_token")
+            
+            # Should not have advanced moderator
+            assert bot.advanced_moderator is None
+            
+            # Basic moderation should still work
+            bot.moderator.moderate_text = AsyncMock(
+                return_value=ModerationResult(False, 0.1)
+            )
+            
+            mock_update = Mock()
+            mock_message = Mock()
+            mock_message.text = "Test message"
+            mock_message.from_user = Mock(id=123)
+            mock_message.chat = Mock(id=456)
+            mock_update.message = mock_message
+            mock_context = Mock()
+            
+            await bot.handle_text_message(mock_update, mock_context)
+            
+            # Should process with basic moderation only
+            bot.moderator.moderate_text.assert_called_once()
+            assert bot.stats["messages_checked"] == 1
 
 
 if __name__ == "__main__":

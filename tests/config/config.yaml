@@ -1,0 +1,25 @@
+moderation:
+  multimodal_model:
+    path: models/multimodal_model
+    type: transformers
+  text_model:
+    path: models/text_model
+    type: transformers
+  vision_model:
+    path: models/vision_model
+    type: transformers
+policies:
+- action: delete
+  description: Spam detection
+  name: spam
+  threshold: 0.7
+- action: delete
+  description: Harassment detection
+  name: harassment
+  threshold: 0.8
+- action: delete
+  description: Adult content
+  name: nsfw
+  threshold: 0.9
+telegram:
+  token: valid_token_123

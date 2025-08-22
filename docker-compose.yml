@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    image: telegram-mod-bot:latest
+    container_name: telegram-mod-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MAX_WORKERS=${MAX_WORKERS:-2}
+      - CACHE_SIZE=${CACHE_SIZE:-1000}
+      - RATE_LIMIT=${RATE_LIMIT:-10}
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - models_data:/app/models
+      - bot_data:/home/botuser/.telegram_bot
+    networks:
+      - bot_network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Prometheus metrics exporter
+  prometheus-exporter:
+    image: prom/node-exporter:latest
+    container_name: prometheus-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    networks:
+      - bot_network
+    profiles:
+      - monitoring
+
+  # Optional: Redis for distributed caching
+  redis:
+    image: redis:7-alpine
+    container_name: telegram-bot-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot_network
+    profiles:
+      - cache
+
+volumes:
+  models_data:
+    driver: local
+  bot_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  bot_network:
+    driver: bridge

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Telegram Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+        
+        .float-animation {
+            animation: float 6s ease-in-out infinite;
+        }
+        
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .neon-glow {
+            box-shadow: 0 0 40px rgba(102, 126, 234, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center">
+    <!-- Background Pattern -->
+    <div class="absolute inset-0 overflow-hidden">
+        <div class="absolute -inset-10 opacity-10">
+            <div class="absolute top-0 -left-4 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl animate-blob"></div>
+            <div class="absolute top-0 -right-4 w-72 h-72 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-2000"></div>
+            <div class="absolute -bottom-8 left-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-4000"></div>
+        </div>
+    </div>
+
+    <!-- Login Container -->
+    <div class="relative z-10 w-full max-w-md px-6">
+        <!-- Logo and Title -->
+        <div class="text-center mb-8 float-animation">
+            <div class="inline-flex items-center justify-center w-20 h-20 bg-blue-600 rounded-full mb-4 neon-glow">
+                <i data-lucide="shield-check" class="w-10 h-10"></i>
+            </div>
+            <h1 class="text-3xl font-bold mb-2">Telegram Moderation Bot</h1>
+            <p class="text-gray-400">Secure Dashboard Access</p>
+        </div>
+
+        <!-- Login Form -->
+        <div class="glass rounded-2xl p-8">
+            <!-- Demo Mode Notice -->
+            <div id="demo-notice" class="hidden bg-blue-500 bg-opacity-20 border border-blue-500 rounded-lg p-4 mb-6">
+                <div class="flex items-center">
+                    <i data-lucide="info" class="w-5 h-5 text-blue-400 mr-3"></i>
+                    <div>
+                        <p class="text-sm font-semibold text-blue-400">Demo Mode Active</p>
+                        <p class="text-xs text-gray-400">Click login to explore the dashboard</p>
+                    </div>
+                </div>
+            </div>
+
+            <form id="login-form">
+                <div class="mb-6">
+                    <label for="token" class="block text-sm font-medium text-gray-300 mb-2">
+                        Bot Token
+                    </label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i data-lucide="key" class="w-5 h-5 text-gray-500"></i>
+                        </div>
+                        <input 
+                            type="password" 
+                            id="token" 
+                            name="token"
+                            class="w-full pl-10 pr-3 py-3 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:border-blue-500 transition"
+                            placeholder="Enter your bot token"
+                            required
+                        >
+                    </div>
+                    <p class="mt-2 text-xs text-gray-500">
+                        Get your token from <a href="https://t.me/botfather" target="_blank" class="text-blue-400 hover:text-blue-300">@BotFather</a> on Telegram
+                    </p>
+                </div>
+
+                <button 
+                    type="submit"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center"
+                >
+                    <span id="login-text">Login to Dashboard</span>
+                    <i data-lucide="arrow-right" class="w-5 h-5 ml-2"></i>
+                </button>
+            </form>
+
+            <!-- Error Message -->
+            <div id="error-message" class="hidden mt-4 bg-red-500 bg-opacity-20 border border-red-500 rounded-lg p-3">
+                <div class="flex items-center">
+                    <i data-lucide="alert-circle" class="w-5 h-5 text-red-400 mr-2"></i>
+                    <p class="text-sm text-red-400" id="error-text">Invalid token</p>
+                </div>
+            </div>
+
+            <!-- Demo Mode Toggle -->
+            <div class="mt-6 text-center">
+                <button 
+                    id="demo-toggle"
+                    class="text-sm text-gray-400 hover:text-white transition"
+                >
+                    Try Demo Mode →
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center mt-8 text-sm text-gray-500">
+            <p>Protected by advanced encryption</p>
+            <div class="flex items-center justify-center mt-2">
+                <i data-lucide="lock" class="w-4 h-4 mr-1"></i>
+                <span>Secure Connection</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const demoMode = urlParams.get('demo') === 'true';
+
+        // Demo mode handling
+        const demoToggle = document.getElementById('demo-toggle');
+        const demoNotice = document.getElementById('demo-notice');
+        const tokenInput = document.getElementById('token');
+        const loginForm = document.getElementById('login-form');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+
+        if (demoMode) {
+            demoNotice.classList.remove('hidden');
+            tokenInput.value = 'DEMO_TOKEN';
+            tokenInput.disabled = true;
+            demoToggle.textContent = 'Exit Demo Mode →';
+        }
+
+        demoToggle.addEventListener('click', () => {
+            if (demoMode) {
+                window.location.href = '/login';
+            } else {
+                window.location.href = '/login?demo=true';
+            }
+        });
+
+        // Form submission
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorMessage.classList.add('hidden');
+
+            const token = tokenInput.value;
+
+            // In demo mode, always succeed
+            if (demoMode) {
+                window.location.href = '/?demo=true';
+                return;
+            }
+
+            // Validate token format
+            if (!token || token.length < 20 || !token.includes(':')) {
+                errorText.textContent = 'Invalid token format. Token should be like: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
+                errorMessage.classList.remove('hidden');
+                return;
+            }
+
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ token })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    window.location.href = '/';
+                } else {
+                    errorText.textContent = data.error || 'Login failed';
+                    errorMessage.classList.remove('hidden');
+                }
+            } catch (error) {
+                errorText.textContent = 'Connection error. Please try again.';
+                errorMessage.classList.remove('hidden');
+            }
+        });
+
+        // Animation for blob backgrounds
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes blob {
+                0%, 100% { transform: translate(0px, 0px) scale(1); }
+                33% { transform: translate(30px, -50px) scale(1.1); }
+                66% { transform: translate(-20px, 20px) scale(0.9); }
+            }
+            .animate-blob {
+                animation: blob 7s infinite;
+            }
+            .animation-delay-2000 {
+                animation-delay: 2s;
+            }
+            .animation-delay-4000 {
+                animation-delay: 4s;
+            }
+        `;
+        document.head.appendChild(style);
+    </script>
+</body>
+</html>

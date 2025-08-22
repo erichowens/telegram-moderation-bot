@@ -1,0 +1,208 @@
+stages:
+  - lint
+  - test
+  - security
+  - build
+  - deploy
+
+variables:
+  PYTHON_VERSION: "3.12"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+
+cache:
+  paths:
+    - .cache/pip
+    - venv/
+
+before_script:
+  - python --version
+  - pip install virtualenv
+  - virtualenv venv
+  - source venv/bin/activate
+
+# Lint Stage
+lint:black:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install black
+    - black --check src/ tests/
+  allow_failure: false
+
+lint:flake8:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install flake8
+    - flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+  allow_failure: false
+
+lint:mypy:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install mypy
+    - mypy src/ --ignore-missing-imports
+  allow_failure: true
+
+# Test Stage
+test:unit:
+  stage: test
+  image: python:3.12
+  services:
+    - name: redis:7-alpine
+      alias: redis
+  coverage: '/^TOTAL.+?(\d+\%)$/'
+  before_script:
+    - apt-get update && apt-get install -y xvfb
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt
+    - pip install pytest-xvfb
+  script:
+    - export DISPLAY=:99.0
+    - Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+    - pytest tests/ --cov=src --cov-report=term --cov-report=html --cov-report=xml
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - htmlcov/
+    expire_in: 1 week
+
+test:integration:
+  stage: test
+  image: python:3.12
+  script:
+    - pip install -r requirements.txt
+    - python -m pytest tests/test_telegram_bot.py tests/test_moderation.py -v
+  allow_failure: true
+
+# Security Stage
+security:bandit:
+  stage: security
+  image: python:3.12-slim
+  script:
+    - pip install bandit
+    - bandit -r src/ -f json -o bandit-report.json
+  artifacts:
+    reports:
+      sast: bandit-report.json
+    expire_in: 1 week
+
+security:safety:
+  stage: security
+  image: python:3.12-slim
+  script:
+    - pip install safety
+    - safety check --json > safety-report.json
+  artifacts:
+    paths:
+      - safety-report.json
+    expire_in: 1 week
+  allow_failure: true
+
+security:trivy:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy fs --no-progress --format json --output trivy-report.json .
+  artifacts:
+    reports:
+      container_scanning: trivy-report.json
+    expire_in: 1 week
+
+# Build Stage
+build:docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $IMAGE_TAG .
+    - docker push $IMAGE_TAG
+    - |
+      if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then
+        docker tag $IMAGE_TAG $CI_REGISTRY_IMAGE:latest
+        docker push $CI_REGISTRY_IMAGE:latest
+      fi
+  only:
+    - main
+    - develop
+    - tags
+
+# Deploy Stage
+deploy:staging:
+  stage: deploy
+  image: alpine:latest
+  environment:
+    name: staging
+    url: https://staging.example.com
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$STAGING_SSH_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "$STAGING_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+  script:
+    - |
+      ssh $STAGING_USER@$STAGING_HOST << EOF
+        docker pull $IMAGE_TAG
+        docker stop telegram-bot-staging || true
+        docker rm telegram-bot-staging || true
+        docker run -d --name telegram-bot-staging \
+          --env-file /opt/telegram-bot/.env.staging \
+          --restart unless-stopped \
+          $IMAGE_TAG
+      EOF
+  only:
+    - develop
+  when: manual
+
+deploy:production:
+  stage: deploy
+  image: alpine:latest
+  environment:
+    name: production
+    url: https://prod.example.com
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$PROD_SSH_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+  script:
+    - |
+      ssh $PROD_USER@$PROD_HOST << EOF
+        docker pull $IMAGE_TAG
+        docker stop telegram-bot-prod || true
+        docker rm telegram-bot-prod || true
+        docker run -d --name telegram-bot-prod \
+          --env-file /opt/telegram-bot/.env.production \
+          --restart unless-stopped \
+          $IMAGE_TAG
+      EOF
+  only:
+    - main
+  when: manual
+
+# Kubernetes Deployment (Optional)
+deploy:k8s:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  environment:
+    name: kubernetes
+  script:
+    - kubectl set image deployment/telegram-bot telegram-bot=$IMAGE_TAG --namespace=bots
+    - kubectl rollout status deployment/telegram-bot --namespace=bots
+  only:
+    - tags
+  when: manual

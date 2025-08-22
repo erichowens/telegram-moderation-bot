@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Bot Dashboard - Moderation Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/@popperjs/core@2"></script>
+    <script src="https://unpkg.com/tippy.js@6"></script>
+    <style>
+        .glass {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .violation-high {
+            border-left: 4px solid #ef4444;
+            background: linear-gradient(90deg, rgba(239, 68, 68, 0.1), transparent);
+        }
+        
+        .violation-medium {
+            border-left: 4px solid #f59e0b;
+            background: linear-gradient(90deg, rgba(245, 158, 11, 0.1), transparent);
+        }
+        
+        .violation-low {
+            border-left: 4px solid #3b82f6;
+            background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent);
+        }
+        
+        .message-bubble {
+            background: rgba(30, 41, 59, 0.9);
+            border-radius: 12px;
+            padding: 8px 12px;
+            max-width: 100%;
+            word-wrap: break-word;
+        }
+        
+        .info-icon {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            background: #64748b;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 14px;
+            font-size: 10px;
+            cursor: help;
+            margin-left: 4px;
+        }
+        
+        .feature-planned {
+            opacity: 0.6;
+            position: relative;
+        }
+        
+        .feature-planned::after {
+            content: "PLANNED";
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #475569;
+            color: #94a3b8;
+            font-size: 9px;
+            padding: 1px 4px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-white">
+    <!-- Top Navigation -->
+    <nav class="glass border-b border-gray-800 sticky top-0 z-50">
+        <div class="max-w-full mx-auto px-4">
+            <div class="flex justify-between h-14">
+                <div class="flex items-center space-x-6">
+                    <div class="flex items-center">
+                        <i data-lucide="shield-check" class="w-7 h-7 text-blue-500 mr-2"></i>
+                        <span class="text-lg font-bold">Telegram Moderation Bot</span>
+                        <span class="ml-2 text-xs bg-blue-600 bg-opacity-20 text-blue-400 px-2 py-1 rounded">v2.1.0</span>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg text-sm font-medium transition" onclick="showEmergencyInfo()">
+                        <i data-lucide="alert-triangle" class="w-4 h-4 inline mr-1"></i>
+                        Emergency Mode
+                        <span class="info-icon" data-tooltip="Temporarily restricts all new users and increases moderation sensitivity">i</span>
+                    </button>
+                    <div id="bot-status" class="flex items-center">
+                        <div class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse mr-2"></div>
+                        <span class="text-sm">Demo Mode</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="flex h-[calc(100vh-3.5rem)]">
+        <!-- Left Panel - Violations Feed -->
+        <div class="w-[450px] border-r border-gray-800 overflow-hidden flex flex-col">
+            <div class="glass p-4 border-b border-gray-800">
+                <h2 class="text-lg font-bold">
+                    Recent Violations
+                    <span class="info-icon" data-tooltip="Shows messages that triggered our moderation rules">i</span>
+                </h2>
+                <div class="mt-2 text-xs text-gray-400">
+                    <span class="inline-block w-2 h-2 bg-green-500 rounded-full mr-1"></span> Implemented
+                    <span class="inline-block w-2 h-2 bg-gray-500 rounded-full mr-1 ml-3"></span> Planned Feature
+                </div>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-3 space-y-3" id="violations-feed">
+                <!-- Violations will be added here -->
+            </div>
+        </div>
+
+        <!-- Center Panel - Main Dashboard -->
+        <div class="flex-1 overflow-y-auto">
+            <!-- What We Actually Detect -->
+            <div class="p-4">
+                <div class="glass rounded-xl p-4">
+                    <h3 class="text-lg font-semibold mb-3">
+                        What This Bot Actually Detects
+                        <span class="info-icon" data-tooltip="These are the violations we can currently identify">i</span>
+                    </h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <h4 class="text-sm font-semibold text-green-400 mb-2">✅ Implemented</h4>
+                            <ul class="space-y-2 text-sm">
+                                <li class="flex items-start">
+                                    <i data-lucide="check" class="w-4 h-4 text-green-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Spam Detection</strong>
+                                        <span class="info-icon" data-tooltip="Keywords, repetitive messages, excessive links">i</span>
+                                        <p class="text-xs text-gray-400">Using keyword matching & pattern detection</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="check" class="w-4 h-4 text-green-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>CAPS LOCK Detection</strong>
+                                        <span class="info-icon" data-tooltip="Messages with >70% capital letters">i</span>
+                                        <p class="text-xs text-gray-400">Simple ratio calculation</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="check" class="w-4 h-4 text-green-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Message Size Limits</strong>
+                                        <span class="info-icon" data-tooltip="Blocks messages over 4096 characters">i</span>
+                                        <p class="text-xs text-gray-400">Prevents text walls</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="check" class="w-4 h-4 text-green-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Rate Limiting</strong>
+                                        <span class="info-icon" data-tooltip="10 messages per minute per user">i</span>
+                                        <p class="text-xs text-gray-400">Token bucket algorithm</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="check" class="w-4 h-4 text-green-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Basic Toxicity Detection</strong>
+                                        <span class="info-icon" data-tooltip="If transformers library is installed">i</span>
+                                        <p class="text-xs text-gray-400">Using HuggingFace models (optional)</p>
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h4 class="text-sm font-semibold text-gray-400 mb-2">🚧 Planned Features</h4>
+                            <ul class="space-y-2 text-sm opacity-60">
+                                <li class="flex items-start">
+                                    <i data-lucide="x" class="w-4 h-4 text-gray-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Coordinated Spam Detection</strong>
+                                        <p class="text-xs text-gray-400">Multiple accounts posting similar content</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="x" class="w-4 h-4 text-gray-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Raid Detection</strong>
+                                        <p class="text-xs text-gray-400">Mass join patterns</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="x" class="w-4 h-4 text-gray-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Account Age Checking</strong>
+                                        <p class="text-xs text-gray-400">Telegram API doesn't provide this</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="x" class="w-4 h-4 text-gray-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Image Content Analysis</strong>
+                                        <p class="text-xs text-gray-400">Currently only checks file size</p>
+                                    </div>
+                                </li>
+                                <li class="flex items-start">
+                                    <i data-lucide="x" class="w-4 h-4 text-gray-500 mr-2 mt-0.5"></i>
+                                    <div>
+                                        <strong>Cross-Group Tracking</strong>
+                                        <p class="text-xs text-gray-400">Would require central database</p>
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Timeline -->
+            <div class="p-4">
+                <div class="glass rounded-xl p-4">
+                    <h3 class="text-lg font-semibold mb-3">
+                        Activity Timeline
+                        <span class="info-icon" data-tooltip="Shows message volume and violations over time">i</span>
+                    </h3>
+                    <div class="mb-3 flex justify-between items-center">
+                        <div class="text-xs text-gray-400">
+                            Click on the chart to see details for that time
+                        </div>
+                        <div class="flex space-x-2">
+                            <button class="text-xs px-3 py-1 rounded bg-blue-600 bg-opacity-20 text-blue-400" onclick="updateTimeRange('1h')">1H</button>
+                            <button class="text-xs px-3 py-1 rounded hover:bg-gray-800" onclick="updateTimeRange('24h')">24H</button>
+                        </div>
+                    </div>
+                    <div id="timeline-chart" style="height: 250px;"></div>
+                    <div id="chart-details" class="mt-3 text-sm text-gray-400 hidden">
+                        <p>Selected time: <span id="selected-time"></span></p>
+                        <p>Messages: <span id="selected-messages"></span> | Violations: <span id="selected-violations"></span></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Current Statistics -->
+            <div class="grid grid-cols-3 gap-4 px-4">
+                <div class="glass rounded-lg p-4">
+                    <h4 class="text-xs text-gray-400 uppercase mb-1">Messages Processed</h4>
+                    <p class="text-2xl font-bold">1,247</p>
+                    <p class="text-xs text-gray-500">In demo, would track real messages</p>
+                </div>
+                <div class="glass rounded-lg p-4">
+                    <h4 class="text-xs text-gray-400 uppercase mb-1">Violations Detected</h4>
+                    <p class="text-2xl font-bold text-red-400">23</p>
+                    <p class="text-xs text-gray-500">Based on our detection rules</p>
+                </div>
+                <div class="glass rounded-lg p-4">
+                    <h4 class="text-xs text-gray-400 uppercase mb-1">Actions Taken</h4>
+                    <p class="text-2xl font-bold text-yellow-400">18</p>
+                    <p class="text-xs text-gray-500">Warns: 12, Deletes: 6</p>
+                </div>
+            </div>
+
+            <!-- How It Works -->
+            <div class="p-4">
+                <div class="glass rounded-xl p-4">
+                    <h3 class="text-lg font-semibold mb-3">How Our Detection Works</h3>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex items-start">
+                            <span class="text-blue-400 mr-2">1.</span>
+                            <div>
+                                <strong>Message Received:</strong> Bot receives message from Telegram
+                                <p class="text-xs text-gray-400 mt-1">Rate limited to prevent abuse</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <span class="text-blue-400 mr-2">2.</span>
+                            <div>
+                                <strong>Security Checks:</strong> Validate message size, check rate limits
+                                <p class="text-xs text-gray-400 mt-1">Prevents DoS attacks</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <span class="text-blue-400 mr-2">3.</span>
+                            <div>
+                                <strong>Rule Processing:</strong> Check against keyword lists, CAPS ratio, patterns
+                                <p class="text-xs text-gray-400 mt-1">Configurable thresholds</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <span class="text-blue-400 mr-2">4.</span>
+                            <div>
+                                <strong>AI Analysis (Optional):</strong> If models installed, check toxicity
+                                <p class="text-xs text-gray-400 mt-1">Uses HuggingFace transformers</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <span class="text-blue-400 mr-2">5.</span>
+                            <div>
+                                <strong>Action Decision:</strong> Based on confidence score and thresholds
+                                <p class="text-xs text-gray-400 mt-1">Delete, warn, or allow</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel - Details -->
+        <div class="w-80 border-l border-gray-800 overflow-hidden flex flex-col">
+            <div class="glass p-4 border-b border-gray-800">
+                <h2 class="text-lg font-bold">Violation Details</h2>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4" id="violation-details">
+                <div class="text-center py-8 text-gray-500">
+                    <i data-lucide="mouse-pointer-click" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+                    <p class="text-sm">Click a violation to see details</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Emergency Mode Modal -->
+    <div id="emergency-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="glass rounded-xl p-6 max-w-md">
+            <h3 class="text-lg font-bold mb-3">Emergency Mode Explained</h3>
+            <p class="text-sm text-gray-300 mb-4">
+                Emergency Mode is a <strong>planned feature</strong> that would:
+            </p>
+            <ul class="space-y-2 text-sm text-gray-400 mb-4">
+                <li>• Temporarily block all new members</li>
+                <li>• Increase moderation sensitivity to maximum</li>
+                <li>• Auto-delete all media files</li>
+                <li>• Restrict posting to verified members only</li>
+            </ul>
+            <p class="text-xs text-yellow-400 mb-4">
+                ⚠️ This feature is not yet implemented. It's shown here to demonstrate the intended UI.
+            </p>
+            <button onclick="closeEmergencyModal()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
+                Got it
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Initialize icons
+        lucide.createIcons();
+
+        // Sample violation messages (realistic examples)
+        const sampleMessages = [
+            {
+                text: "🔥🔥🔥 AMAZING CRYPTO OPPORTUNITY!!! JOIN NOW @cryptoscam2024 💰💰💰 GUARANTEED 1000% RETURNS!!!",
+                violation: "Spam",
+                confidence: 95,
+                reason: "Multiple spam indicators: excessive emojis, all caps, crypto keywords, suspicious link"
+            },
+            {
+                text: "STOP SHOUTING AT ME YOU IDIOT!!!!!!",
+                violation: "Caps Lock",
+                confidence: 88,
+                reason: "87% capital letters (threshold: 70%)"
+            },
+            {
+                text: "Check out my OnlyFans link: [censored]",
+                violation: "NSFW Content",
+                confidence: 92,
+                reason: "Adult content keyword detected"
+            },
+            {
+                text: "Buy cheap followers! Visit: bit.ly/xxxfollowers\nBuy cheap followers! Visit: bit.ly/xxxfollowers\nBuy cheap followers! Visit: bit.ly/xxxfollowers",
+                violation: "Repetitive Spam",
+                confidence: 98,
+                reason: "Message repeated 3 times, contains suspicious links"
+            },
+            {
+                text: "You're such a loser, nobody likes you, just leave the group already",
+                violation: "Harassment",
+                confidence: 76,
+                reason: "Toxicity score: 0.76 (threshold: 0.70)"
+            },
+            {
+                text: "Free iPhone giveaway! Click here -> t.me/freeiphone",
+                violation: "Phishing",
+                confidence: 83,
+                reason: "Common phishing pattern: 'free' + brand + link"
+            }
+        ];
+
+        const users = [
+            { name: 'CryptoSpammer99', id: '@cryptospam99', avatar: '💰' },
+            { name: 'AngryUser2024', id: '@angryuser', avatar: '😡' },
+            { name: 'LinkBot_v2', id: '@linkbot', avatar: '🤖' },
+            { name: 'NewUser123', id: '@newuser123', avatar: '👤' },
+            { name: 'ToxicTroll', id: '@toxictroll', avatar: '🧌' },
+            { name: 'AdBot5000', id: '@adbot5000', avatar: '📢' }
+        ];
+
+        const groups = ['Tech Discussion', 'Crypto Trading', 'Gaming Community', 'News Channel', 'Support Group'];
+
+        // Add violation to feed
+        function addViolation() {
+            const message = sampleMessages[Math.floor(Math.random() * sampleMessages.length)];
+            const user = users[Math.floor(Math.random() * users.length)];
+            const group = groups[Math.floor(Math.random() * groups.length)];
+            
+            const violationDiv = document.createElement('div');
+            const severity = message.confidence > 90 ? 'high' : message.confidence > 70 ? 'medium' : 'low';
+            violationDiv.className = `glass rounded-lg p-3 cursor-pointer hover:bg-gray-800 hover:bg-opacity-50 transition violation-${severity}`;
+            
+            const violationId = Date.now() + Math.random();
+            violationDiv.dataset.violationId = violationId;
+            
+            violationDiv.innerHTML = `
+                <div class="flex items-start justify-between mb-2">
+                    <div class="flex items-center">
+                        <span class="text-2xl mr-2">${user.avatar}</span>
+                        <div>
+                            <p class="font-semibold text-sm">${user.name}</p>
+                            <p class="text-xs text-gray-400">${group} • ${new Date().toLocaleTimeString()}</p>
+                        </div>
+                    </div>
+                    <span class="text-xs px-2 py-1 rounded ${
+                        message.violation === 'Spam' ? 'bg-red-500' :
+                        message.violation === 'Harassment' ? 'bg-orange-500' :
+                        message.violation === 'NSFW Content' ? 'bg-purple-500' :
+                        message.violation === 'Caps Lock' ? 'bg-yellow-500' :
+                        'bg-blue-500'
+                    } bg-opacity-20 text-white">
+                        ${message.violation}
+                    </span>
+                </div>
+                
+                <div class="message-bubble mb-2">
+                    <p class="text-sm text-gray-300 break-words">${message.text}</p>
+                </div>
+                
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-gray-400">Confidence: ${message.confidence}%</span>
+                    <div class="flex space-x-2">
+                        <span class="px-2 py-1 rounded bg-gray-700">
+                            Bot: ${Math.random() > 0.5 ? 'Deleted' : 'Warned'}
+                        </span>
+                    </div>
+                </div>
+            `;
+            
+            violationDiv.onclick = () => showDetails(violationId, user, message, group);
+            
+            const feed = document.getElementById('violations-feed');
+            feed.insertBefore(violationDiv, feed.firstChild);
+            
+            // Keep only last 10
+            while (feed.children.length > 10) {
+                feed.removeChild(feed.lastChild);
+            }
+        }
+
+        // Show violation details
+        function showDetails(id, user, message, group) {
+            const detailsDiv = document.getElementById('violation-details');
+            detailsDiv.innerHTML = `
+                <div class="space-y-4">
+                    <!-- User Info -->
+                    <div class="glass rounded-lg p-3">
+                        <div class="flex items-center mb-3">
+                            <span class="text-3xl mr-3">${user.avatar}</span>
+                            <div>
+                                <p class="font-bold">${user.name}</p>
+                                <p class="text-xs text-gray-400">${user.id}</p>
+                            </div>
+                        </div>
+                        <div class="text-xs space-y-1">
+                            <p><span class="text-gray-400">Group:</span> ${group}</p>
+                            <p><span class="text-gray-400">Time:</span> ${new Date().toLocaleString()}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Violation Details -->
+                    <div class="glass rounded-lg p-3">
+                        <h4 class="font-semibold text-sm mb-2">Violation Analysis</h4>
+                        <div class="space-y-2 text-xs">
+                            <p><span class="text-gray-400">Type:</span> ${message.violation}</p>
+                            <p><span class="text-gray-400">Confidence:</span> ${message.confidence}%</p>
+                            <p><span class="text-gray-400">Reason:</span></p>
+                            <p class="text-gray-300">${message.reason}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Message Content -->
+                    <div class="glass rounded-lg p-3">
+                        <h4 class="font-semibold text-sm mb-2">Original Message</h4>
+                        <div class="message-bubble">
+                            <p class="text-sm text-gray-300 break-words">${message.text}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- What We Know -->
+                    <div class="glass rounded-lg p-3">
+                        <h4 class="font-semibold text-sm mb-2">What We Can Track</h4>
+                        <div class="space-y-1 text-xs">
+                            <p>✅ Message content</p>
+                            <p>✅ User ID and username</p>
+                            <p>✅ Group where posted</p>
+                            <p>✅ Time of message</p>
+                            <p class="text-gray-500">❌ Account age (not available via API)</p>
+                            <p class="text-gray-500">❌ User's history (would need database)</p>
+                            <p class="text-gray-500">❌ Cross-group activity (requires central tracking)</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Actions -->
+                    <div class="glass rounded-lg p-3">
+                        <h4 class="font-semibold text-sm mb-2">Available Actions</h4>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button class="bg-yellow-600 hover:bg-yellow-700 text-xs px-2 py-1.5 rounded">
+                                Warn User
+                            </button>
+                            <button class="bg-orange-600 hover:bg-orange-700 text-xs px-2 py-1.5 rounded">
+                                Delete Message
+                            </button>
+                            <button class="bg-red-600 hover:bg-red-700 text-xs px-2 py-1.5 rounded feature-planned">
+                                Ban User
+                            </button>
+                            <button class="bg-purple-600 hover:bg-purple-700 text-xs px-2 py-1.5 rounded feature-planned">
+                                Report to Telegram
+                            </button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">
+                            Note: Ban and Report features are planned
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Initialize timeline chart
+        function initChart() {
+            const times = [];
+            const messages = [];
+            const violations = [];
+            
+            for (let i = 60; i >= 0; i--) {
+                const time = new Date(Date.now() - i * 60000);
+                times.push(time);
+                messages.push(Math.floor(Math.random() * 50) + 20);
+                violations.push(Math.floor(Math.random() * 5));
+            }
+            
+            const data = [
+                {
+                    x: times,
+                    y: messages,
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Messages',
+                    line: { color: '#3b82f6', width: 2 }
+                },
+                {
+                    x: times,
+                    y: violations,
+                    type: 'bar',
+                    name: 'Violations',
+                    marker: { color: '#ef4444' },
+                    yaxis: 'y2'
+                }
+            ];
+            
+            const layout = {
+                template: 'plotly_dark',
+                paper_bgcolor: 'transparent',
+                plot_bgcolor: 'transparent',
+                margin: { t: 0, r: 40, b: 40, l: 40 },
+                showlegend: true,
+                legend: { orientation: 'h', y: 1.1 },
+                xaxis: {
+                    showgrid: false,
+                    tickformat: '%H:%M'
+                },
+                yaxis: {
+                    title: 'Messages',
+                    showgrid: true,
+                    gridcolor: 'rgba(255,255,255,0.1)'
+                },
+                yaxis2: {
+                    title: 'Violations',
+                    overlaying: 'y',
+                    side: 'right',
+                    showgrid: false
+                },
+                hovermode: 'x unified'
+            };
+            
+            const config = {
+                responsive: true,
+                displayModeBar: false
+            };
+            
+            Plotly.newPlot('timeline-chart', data, layout, config);
+            
+            // Make chart clickable
+            document.getElementById('timeline-chart').on('plotly_click', function(data) {
+                const point = data.points[0];
+                document.getElementById('selected-time').textContent = new Date(point.x).toLocaleTimeString();
+                document.getElementById('selected-messages').textContent = point.y;
+                document.getElementById('selected-violations').textContent = data.points[1] ? data.points[1].y : 0;
+                document.getElementById('chart-details').classList.remove('hidden');
+            });
+        }
+
+        // Initialize tooltips
+        function initTooltips() {
+            tippy('[data-tooltip]', {
+                content: (reference) => reference.getAttribute('data-tooltip'),
+                theme: 'dark',
+                placement: 'top',
+                arrow: true,
+                duration: [200, 150]
+            });
+        }
+
+        // Show emergency info
+        function showEmergencyInfo() {
+            document.getElementById('emergency-modal').classList.remove('hidden');
+        }
+
+        function closeEmergencyModal() {
+            document.getElementById('emergency-modal').classList.add('hidden');
+        }
+
+        // Update time range
+        function updateTimeRange(range) {
+            // In a real implementation, this would fetch new data
+            console.log('Updating time range to:', range);
+            initChart(); // Redraw with new data
+        }
+
+        // Start demo
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            initTooltips();
+            
+            // Add initial violations
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => addViolation(), i * 500);
+            }
+            
+            // Continue adding violations
+            setInterval(() => {
+                if (Math.random() > 0.7) {
+                    addViolation();
+                }
+            }, 8000);
+        });
+    </script>
+</body>
+</html>
