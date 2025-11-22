@@ -14,17 +14,23 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 try:
     from .moderation import ContentModerator, ModerationResult
     from .config import Config
+    from .config_manager import ConfigManager
+    from .database.logging import LogManager
     from .advanced_moderation import AdvancedModerationSystem
     HAS_ADVANCED = True
 except ImportError:
     try:
         from moderation import ContentModerator, ModerationResult
         from config import Config
+        from config_manager import ConfigManager
+        from database.logging import LogManager
         from advanced_moderation import AdvancedModerationSystem
         HAS_ADVANCED = True
     except ImportError:
         from moderation import ContentModerator, ModerationResult
         from config import Config
+        from config_manager import ConfigManager
+        from database.logging import LogManager
         HAS_ADVANCED = False
         logger.warning("Advanced moderation not available")
 
@@ -55,14 +61,14 @@ class TelegramModerationBot:
     def _load_moderator(self):
         """Load content moderator with default settings."""
         try:
-            config = Config()
-            self.moderator = ContentModerator(config)
-        except FileNotFoundError as e:
-            logger.critical(f"Configuration file not found: {e}")
-            raise
+            # We use ConfigManager now, but for backward compatibility 
+            # we can still load from config.yaml if needed.
+            # For now, we initialize with empty/default config 
+            # and pass dynamic config per message.
+            self.moderator = ContentModerator({})
         except Exception as e:
-            logger.critical(f"Failed to load moderator configuration: {e}")
-            raise RuntimeError(f"Cannot initialize bot without valid configuration: {e}")
+            logger.critical(f"Failed to load moderator: {e}")
+            raise RuntimeError(f"Cannot initialize bot: {e}")
     
     def _load_advanced_moderator(self):
         """Load advanced moderation system if available."""
@@ -109,6 +115,16 @@ class TelegramModerationBot:
         self.stats["messages_checked"] += 1
         
         try:
+            chat_id = message.chat.id
+            chat_title = getattr(message.chat, 'title', 'Private')
+            
+            # Ensure group is registered in DB
+            # In production, we might want to cache this or check less frequently
+            ConfigManager.get_or_create_group(chat_id, chat_title)
+            
+            # Get group-specific config
+            group_config = ConfigManager.get_group_config(chat_id)
+            
             # Track message for pattern detection if advanced moderation is available
             if self.advanced_moderator and message.from_user and message.chat:
                 self.advanced_moderator.track_message(
@@ -126,8 +142,8 @@ class TelegramModerationBot:
                             logger.warning(f"Threat pattern detected: {pattern['type']} - {pattern['affected_users']}")
                             # Could trigger automatic actions based on pattern type
             
-            # Moderate the text content
-            result = await self.moderator.moderate_text(message.text)
+            # Moderate the text content using group config
+            result = await self.moderator.moderate_text(message.text, config=group_config)
             
             if result.is_violation:
                 await self.handle_violation(message, result, "text")
@@ -250,6 +266,21 @@ class TelegramModerationBot:
         
         if action_taken:
             self.stats["actions_taken"] += 1
+        
+        # Log to database
+        try:
+            LogManager.log_violation(
+                group_id=message.chat_id,
+                user_id=message.from_user.id if message.from_user else 0,
+                username=message.from_user.username if message.from_user else "Unknown",
+                violation_type=result.category or "unknown",
+                content_type=content_type,
+                confidence=result.confidence,
+                reason=result.reason or "No reason provided",
+                action_taken=action_taken or "none"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log violation to DB: {e}")
         
         # Notify GUI if callback is set
         if self.violation_callback:

@@ -207,8 +207,11 @@ class ContentModerator:
             content = content.encode('utf-8')
         return hashlib.md5(content).hexdigest()
     
-    async def moderate_text(self, text: str) -> ModerationResult:
+    async def moderate_text(self, text: str, config: Optional[Dict[str, Any]] = None) -> ModerationResult:
         """Moderate text content using AI models and rules."""
+        # Use provided config or fall back to instance config
+        current_config = config or self.config
+        
         # Validate input size
         if not self.validator.validate_message_size(text):
             return ModerationResult(
@@ -238,7 +241,7 @@ class ContentModerator:
         # Try AI model if available
         if 'toxicity' in self.models:
             try:
-                result = await self._moderate_text_ai(text)
+                result = await self._moderate_text_ai(text, current_config)
                 if result.is_violation:
                     self._add_to_cache(cache_key, result)
                     return result
@@ -246,11 +249,11 @@ class ContentModerator:
                 logger.error(f"AI moderation failed, falling back to rules: {e}")
         
         # Fall back to rule-based moderation
-        result = await self._moderate_text_rules(text)
+        result = await self._moderate_text_rules(text, current_config)
         self._add_to_cache(cache_key, result)
         return result
     
-    async def _moderate_text_ai(self, text: str) -> ModerationResult:
+    async def _moderate_text_ai(self, text: str, config: Dict[str, Any]) -> ModerationResult:
         """Use AI model for text moderation."""
         # Run CPU-intensive AI model in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
@@ -260,10 +263,12 @@ class ContentModerator:
             text
         )
         
+        threshold = config.get('toxicity_threshold', ModerationThresholds.TOXICITY_THRESHOLD)
+        
         # Parse result (format may vary by model)
         if isinstance(toxicity_result, list) and len(toxicity_result) > 0:
             result = toxicity_result[0]
-            if result.get('label') == 'TOXIC' and result.get('score', 0) > 0.7:
+            if result.get('label') == 'TOXIC' and result.get('score', 0) > threshold:
                 return ModerationResult(
                     is_violation=True,
                     confidence=result['score'],
@@ -273,9 +278,14 @@ class ContentModerator:
         
         return ModerationResult(is_violation=False, confidence=0.0)
     
-    async def _moderate_text_rules(self, text: str) -> ModerationResult:
+    async def _moderate_text_rules(self, text: str, config: Dict[str, Any]) -> ModerationResult:
         """Rule-based text moderation fallback."""
         text_lower = text.lower()
+        
+        # Get thresholds from config
+        spam_thresh = config.get('spam_threshold', ModerationThresholds.SPAM_THRESHOLD)
+        harassment_thresh = config.get('harassment_threshold', ModerationThresholds.HARASSMENT_THRESHOLD)
+        caps_thresh = config.get('max_caps_ratio', ModerationThresholds.CAPS_RATIO_THRESHOLD)
         
         # Check for spam
         spam_score = self.check_keywords(text_lower, self.spam_keywords)
@@ -284,7 +294,7 @@ class ContentModerator:
             if self.is_repetitive(text):
                 spam_score += 0.3
                 
-            if spam_score >= ModerationThresholds.SPAM_THRESHOLD:
+            if spam_score >= spam_thresh:
                 return ModerationResult(
                     is_violation=True,
                     confidence=min(spam_score, 0.95),
@@ -294,7 +304,7 @@ class ContentModerator:
         
         # Check for harassment
         harassment_score = self.check_keywords(text_lower, self.harassment_keywords)
-        if harassment_score >= ModerationThresholds.HARASSMENT_THRESHOLD:
+        if harassment_score >= harassment_thresh:
             return ModerationResult(
                 is_violation=True,
                 confidence=min(harassment_score, 0.95),
@@ -323,7 +333,7 @@ class ContentModerator:
             )
         
         # Check for excessive caps (shouting)
-        if self.is_excessive_caps(text):
+        if self.is_excessive_caps(text, caps_thresh):
             return ModerationResult(
                 is_violation=True,
                 confidence=0.6,
@@ -494,7 +504,7 @@ class ContentModerator:
         max_count = max(word_counts.values())
         return max_count > len(words) * 0.5  # More than 50% repeated words
     
-    def is_excessive_caps(self, text: str) -> bool:
+    def is_excessive_caps(self, text: str, threshold: float = ModerationThresholds.CAPS_RATIO_THRESHOLD) -> bool:
         """Check if text has excessive capital letters."""
         if len(text) < 10:
             return False
@@ -502,7 +512,7 @@ class ContentModerator:
         caps_count = sum(1 for c in text if c.isupper())
         caps_ratio = caps_count / len(text)
         
-        return caps_ratio > ModerationThresholds.CAPS_RATIO_THRESHOLD
+        return caps_ratio > threshold
     
     def apply_custom_rules(self, text: str) -> Optional[ModerationResult]:
         """Apply custom rules parsed from rule documents."""
