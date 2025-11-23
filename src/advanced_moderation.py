@@ -25,10 +25,11 @@ try:
     )
     from PIL import Image
     import torch
+    import imagehash
     HAS_TRANSFORMERS = True
 except ImportError:
     HAS_TRANSFORMERS = False
-    print("Warning: transformers not installed. Advanced moderation features disabled.")
+    print("Warning: transformers/imagehash not installed. Advanced moderation features disabled.")
 
 try:
     import cv2
@@ -70,6 +71,8 @@ class VisionModerator:
         self.nsfw_detector = None
         self.blip_processor = None
         self.blip_model = None
+        # CSAM / Known bad hash database (mock for now, would be Redis set in prod)
+        self.known_bad_hashes = set() 
         
     def load_models(self):
         """Load vision models for content analysis."""
@@ -122,20 +125,33 @@ class VisionModerator:
             # Convert bytes to PIL Image
             image = Image.open(io.BytesIO(image_data))
             
-            # NSFW Detection
+            # 1. Perceptual Hashing (CSAM / Known Bad Content)
+            # This is critical for catching known illegal content instantly
+            phash = str(imagehash.phash(image))
+            if phash in self.known_bad_hashes:
+                return ImageAnalysisResult(
+                    is_nsfw=True,
+                    nsfw_confidence=1.0,
+                    content_description="KNOWN ILLEGAL CONTENT MATCH",
+                    detected_objects=["illegal_content"],
+                    safety_scores={'illegal': 1.0}
+                )
+
+            # 2. NSFW Detection (Visual)
             nsfw_results = await self._detect_nsfw(image)
             
-            # Content Understanding with BLIP
+            # 3. Content Understanding with BLIP (Semantic)
             description = await self._generate_caption(image)
             
-            # Analyze caption for problematic content
+            # 4. Analyze caption for problematic content
             safety_scores = self._analyze_caption_safety(description)
             
-            # Determine if NSFW based on multiple signals
+            # Determine violation based on multiple signals
+            # We separate 'NSFW' (Nudity) from 'Illegal/Harmful'
             is_nsfw = (
                 nsfw_results['confidence'] > 0.7 or
-                safety_scores.get('sexual', 0) > 0.5 or
-                safety_scores.get('violence', 0) > 0.7
+                safety_scores.get('sexual', 0) > 0.6 or
+                safety_scores.get('violence', 0) > 0.8
             )
             
             return ImageAnalysisResult(

@@ -17,6 +17,7 @@ try:
     from .config_manager import ConfigManager
     from .database.logging import LogManager
     from .advanced_moderation import AdvancedModerationSystem
+    from .llm_analyzer import LLMSentimentAnalyzer
     HAS_ADVANCED = True
 except ImportError:
     try:
@@ -25,6 +26,7 @@ except ImportError:
         from config_manager import ConfigManager
         from database.logging import LogManager
         from advanced_moderation import AdvancedModerationSystem
+        from llm_analyzer import LLMSentimentAnalyzer
         HAS_ADVANCED = True
     except ImportError:
         from moderation import ContentModerator, ModerationResult
@@ -75,11 +77,15 @@ class TelegramModerationBot:
         if HAS_ADVANCED:
             try:
                 self.advanced_moderator = AdvancedModerationSystem()
+                # Initialize LLM Analyzer - API key should be in env vars
+                self.llm_analyzer = LLMSentimentAnalyzer()
+                
                 asyncio.create_task(self.advanced_moderator.initialize())
                 logger.info("Advanced moderation system loaded")
             except Exception as e:
                 logger.warning(f"Failed to load advanced moderation: {e}")
                 self.advanced_moderator = None
+                self.llm_analyzer = None
         else:
             logger.info("Advanced moderation not available")
     
@@ -144,6 +150,21 @@ class TelegramModerationBot:
             
             # Moderate the text content using group config
             result = await self.moderator.moderate_text(message.text, config=group_config)
+            
+            # If basic rules pass, check Sentiment/FUD (Premium Feature)
+            # Only check if enabled in config and confidence is high
+            if not result.is_violation and self.llm_analyzer:
+                # In production, check tenant subscription tier here
+                # if tenant.has_sentiment_guard:
+                
+                sentiment = await self.llm_analyzer.analyze_text(message.text)
+                if sentiment.is_danger and sentiment.confidence > 0.8:
+                    result = ModerationResult(
+                        is_violation=True,
+                        confidence=sentiment.confidence,
+                        reason=f"Detected {sentiment.category}: {sentiment.explanation}",
+                        category=sentiment.category
+                    )
             
             if result.is_violation:
                 await self.handle_violation(message, result, "text")
