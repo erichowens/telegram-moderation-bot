@@ -25,10 +25,11 @@ try:
     )
     from PIL import Image
     import torch
+    import imagehash
     HAS_TRANSFORMERS = True
 except ImportError:
     HAS_TRANSFORMERS = False
-    print("Warning: transformers not installed. Advanced moderation features disabled.")
+    print("Warning: transformers/imagehash not installed. Advanced moderation features disabled.")
 
 try:
     import cv2
@@ -70,6 +71,8 @@ class VisionModerator:
         self.nsfw_detector = None
         self.blip_processor = None
         self.blip_model = None
+        # CSAM / Known bad hash database (mock for now, would be Redis set in prod)
+        self.known_bad_hashes = set() 
         
     def load_models(self):
         """Load vision models for content analysis."""
@@ -122,20 +125,33 @@ class VisionModerator:
             # Convert bytes to PIL Image
             image = Image.open(io.BytesIO(image_data))
             
-            # NSFW Detection
+            # 1. Perceptual Hashing (CSAM / Known Bad Content)
+            # This is critical for catching known illegal content instantly
+            phash = str(imagehash.phash(image))
+            if phash in self.known_bad_hashes:
+                return ImageAnalysisResult(
+                    is_nsfw=True,
+                    nsfw_confidence=1.0,
+                    content_description="KNOWN ILLEGAL CONTENT MATCH",
+                    detected_objects=["illegal_content"],
+                    safety_scores={'illegal': 1.0}
+                )
+
+            # 2. NSFW Detection (Visual)
             nsfw_results = await self._detect_nsfw(image)
             
-            # Content Understanding with BLIP
+            # 3. Content Understanding with BLIP (Semantic)
             description = await self._generate_caption(image)
             
-            # Analyze caption for problematic content
+            # 4. Analyze caption for problematic content
             safety_scores = self._analyze_caption_safety(description)
             
-            # Determine if NSFW based on multiple signals
+            # Determine violation based on multiple signals
+            # We separate 'NSFW' (Nudity) from 'Illegal/Harmful'
             is_nsfw = (
                 nsfw_results['confidence'] > 0.7 or
-                safety_scores.get('sexual', 0) > 0.5 or
-                safety_scores.get('violence', 0) > 0.7
+                safety_scores.get('sexual', 0) > 0.6 or
+                safety_scores.get('violence', 0) > 0.8
             )
             
             return ImageAnalysisResult(
@@ -235,9 +251,15 @@ class ThreatPatternDetector:
     
     def __init__(self, window_minutes: int = 5):
         self.window_minutes = window_minutes
-        self.message_history = defaultdict(lambda: deque(maxlen=1000))
-        self.user_activity = defaultdict(lambda: deque(maxlen=100))
         self.similarity_threshold = 0.8
+        # Use Redis if available, otherwise fallback to in-memory
+        try:
+            from .database.redis_client import redis_client
+            self.redis = redis_client
+        except ImportError:
+            self.redis = None
+            self.message_history = defaultdict(lambda: deque(maxlen=1000))
+            self.user_activity = defaultdict(lambda: deque(maxlen=100))
         
     def add_message(self, user_id: str, group_id: str, message: str, timestamp: datetime):
         """Add message to tracking history."""
@@ -245,13 +267,43 @@ class ThreatPatternDetector:
             'user_id': user_id,
             'group_id': group_id,
             'message': message,
-            'timestamp': timestamp,
+            'timestamp': timestamp.isoformat(), # Serialize date
             'hash': self._hash_message(message)
         }
         
-        self.message_history[group_id].append(message_data)
-        self.user_activity[user_id].append(message_data)
+        if self.redis and self.redis.client:
+            # Store in Redis
+            # Keys: group:123:msgs, user:456:msgs
+            self.redis.push_to_list(f"group:{group_id}:msgs", message_data, max_len=1000, ttl=3600)
+            self.redis.push_to_list(f"user:{user_id}:msgs", message_data, max_len=100, ttl=86400)
+        else:
+            # Fallback to memory
+            self.message_history[group_id].append(message_data)
+            self.user_activity[user_id].append(message_data)
     
+    def _get_group_messages(self, group_id: str) -> List[Dict[str, Any]]:
+        """Get recent messages for a group from store."""
+        if self.redis and self.redis.client:
+            msgs = self.redis.get_list(f"group:{group_id}:msgs")
+            # Deserialize timestamp
+            for m in msgs:
+                if isinstance(m['timestamp'], str):
+                    m['timestamp'] = datetime.fromisoformat(m['timestamp'])
+            return msgs
+        else:
+            return list(self.message_history[group_id])
+            
+    def _get_user_messages(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get recent messages for a user from store."""
+        if self.redis and self.redis.client:
+            msgs = self.redis.get_list(f"user:{user_id}:msgs")
+            for m in msgs:
+                 if isinstance(m['timestamp'], str):
+                    m['timestamp'] = datetime.fromisoformat(m['timestamp'])
+            return msgs
+        else:
+            return list(self.user_activity[user_id])
+
     def detect_patterns(self, group_id: str) -> List[ThreatPattern]:
         """Detect threat patterns in a group."""
         patterns = []
@@ -275,7 +327,7 @@ class ThreatPatternDetector:
     
     def _detect_coordinated_spam(self, group_id: str) -> Optional[ThreatPattern]:
         """Detect multiple accounts posting similar content."""
-        messages = list(self.message_history[group_id])
+        messages = self._get_group_messages(group_id)
         if len(messages) < 3:
             return None
         
@@ -316,7 +368,7 @@ class ThreatPatternDetector:
     
     def _detect_raid_pattern(self, group_id: str) -> Optional[ThreatPattern]:
         """Detect mass join or message flood patterns."""
-        messages = list(self.message_history[group_id])
+        messages = self._get_group_messages(group_id)
         now = datetime.now()
         
         # Check message rate in 1-minute windows
@@ -329,7 +381,7 @@ class ThreatPatternDetector:
             # Check if these are new users (simplified check)
             new_users = []
             for user in unique_users:
-                user_history = list(self.user_activity[user])
+                user_history = self._get_user_messages(user)
                 if len(user_history) < 5:  # User has less than 5 total messages
                     new_users.append(user)
             
@@ -352,7 +404,7 @@ class ThreatPatternDetector:
         """Detect excessive link posting."""
         import re
         
-        messages = list(self.message_history[group_id])
+        messages = self._get_group_messages(group_id)
         now = datetime.now()
         window_start = now - timedelta(minutes=self.window_minutes)
         

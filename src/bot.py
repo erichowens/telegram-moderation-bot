@@ -8,23 +8,31 @@ import os
 import time
 from datetime import datetime
 from typing import Optional, Callable, Dict, Any
-from telegram import Update, Message
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
 
 try:
     from .moderation import ContentModerator, ModerationResult
     from .config import Config
+    from .config_manager import ConfigManager
+    from .database.logging import LogManager
     from .advanced_moderation import AdvancedModerationSystem
+    from .llm_analyzer import LLMSentimentAnalyzer
     HAS_ADVANCED = True
 except ImportError:
     try:
         from moderation import ContentModerator, ModerationResult
         from config import Config
+        from config_manager import ConfigManager
+        from database.logging import LogManager
         from advanced_moderation import AdvancedModerationSystem
+        from llm_analyzer import LLMSentimentAnalyzer
         HAS_ADVANCED = True
     except ImportError:
         from moderation import ContentModerator, ModerationResult
         from config import Config
+        from config_manager import ConfigManager
+        from database.logging import LogManager
         HAS_ADVANCED = False
         logger.warning("Advanced moderation not available")
 
@@ -55,30 +63,39 @@ class TelegramModerationBot:
     def _load_moderator(self):
         """Load content moderator with default settings."""
         try:
-            config = Config()
-            self.moderator = ContentModerator(config)
-        except FileNotFoundError as e:
-            logger.critical(f"Configuration file not found: {e}")
-            raise
+            # We use ConfigManager now, but for backward compatibility 
+            # we can still load from config.yaml if needed.
+            # For now, we initialize with empty/default config 
+            # and pass dynamic config per message.
+            self.moderator = ContentModerator({})
         except Exception as e:
-            logger.critical(f"Failed to load moderator configuration: {e}")
-            raise RuntimeError(f"Cannot initialize bot without valid configuration: {e}")
+            logger.critical(f"Failed to load moderator: {e}")
+            raise RuntimeError(f"Cannot initialize bot: {e}")
     
     def _load_advanced_moderator(self):
         """Load advanced moderation system if available."""
         if HAS_ADVANCED:
             try:
                 self.advanced_moderator = AdvancedModerationSystem()
+                # Initialize LLM Analyzer - API key should be in env vars
+                self.llm_analyzer = LLMSentimentAnalyzer()
+                
                 asyncio.create_task(self.advanced_moderator.initialize())
                 logger.info("Advanced moderation system loaded")
             except Exception as e:
                 logger.warning(f"Failed to load advanced moderation: {e}")
                 self.advanced_moderator = None
+                self.llm_analyzer = None
         else:
             logger.info("Advanced moderation not available")
     
     def _setup_handlers(self):
         """Set up message handlers."""
+        # Command handlers
+        self.application.add_handler(CommandHandler("start", self.handle_start_command))
+        self.application.add_handler(CommandHandler("settings", self.handle_settings_command))
+        self.application.add_handler(CommandHandler("upgrade", self.handle_upgrade_command))
+
         # Handle text messages
         text_handler = MessageHandler(
             filters.TEXT & ~filters.COMMAND, 
@@ -100,6 +117,59 @@ class TelegramModerationBot:
         )
         self.application.add_handler(video_handler)
     
+    async def handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start command."""
+        await update.message.reply_text(
+            "🛡️ **Iron Dome Active**\n\n"
+            "I am ready to protect your community.\n"
+            "Add me to your group and make me Admin.\n\n"
+            "Commands:\n"
+            "/settings - Configure protection levels\n"
+            "/upgrade - View premium features (Sentiment Guard)"
+        )
+
+    async def handle_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /settings command."""
+        chat_id = update.effective_chat.id
+        group = ConfigManager.get_or_create_group(chat_id, update.effective_chat.title or "Private")
+        config = ConfigManager.get_group_config(chat_id)
+        
+        # Determine tier
+        # In a real app, we'd query the Tenant via the group owner
+        is_premium = False 
+        
+        text = (
+            f"⚙️ **Settings for {update.effective_chat.title}**\n\n"
+            f"🛡️ **Raid Shield**: {'✅ Active' if config.get('raid_shield', True) else '❌ Disabled'}\n"
+            f"🤬 **Toxicity Filter**: {'✅ Active' if 'toxicity' in config['enabled_features'] else '❌ Disabled'}\n"
+            f"🧠 **Sentiment Guard**: {'✅ Active' if is_premium else '🔒 Locked (Premium)'}\n\n"
+            f"Current Thresholds:\n"
+            f"- Spam: {config['spam_threshold']}\n"
+            f"- Toxicity: {config['toxicity_threshold']}\n"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🛡️ Raid Settings", callback_data="settings_raid")],
+            [InlineKeyboardButton("🧠 Upgrade to Premium", callback_data="upgrade_premium")]
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_upgrade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /upgrade command."""
+        text = (
+            "🚀 **Upgrade to Iron Dome Premium**\n\n"
+            "Get access to **Sentiment Guard**:\n"
+            "• AI FUD Detection (Detect 'Devs are selling' rumors)\n"
+            "• Competitor Shilling Protection\n"
+            "• Weekly Threat Reports\n\n"
+            "**Pricing**:\n"
+            "• $200/mo - Raid Shield (Current)\n"
+            "• $500/mo - Sentiment Guard (Premium)\n\n"
+            "Contact @SalesAdmin to upgrade."
+        )
+        await update.message.reply_text(text)
+
     async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages for moderation."""
         message = update.message
@@ -109,6 +179,16 @@ class TelegramModerationBot:
         self.stats["messages_checked"] += 1
         
         try:
+            chat_id = message.chat.id
+            chat_title = getattr(message.chat, 'title', 'Private')
+            
+            # Ensure group is registered in DB
+            # In production, we might want to cache this or check less frequently
+            ConfigManager.get_or_create_group(chat_id, chat_title)
+            
+            # Get group-specific config
+            group_config = ConfigManager.get_group_config(chat_id)
+            
             # Track message for pattern detection if advanced moderation is available
             if self.advanced_moderator and message.from_user and message.chat:
                 self.advanced_moderator.track_message(
@@ -126,8 +206,25 @@ class TelegramModerationBot:
                             logger.warning(f"Threat pattern detected: {pattern['type']} - {pattern['affected_users']}")
                             # Could trigger automatic actions based on pattern type
             
-            # Moderate the text content
-            result = await self.moderator.moderate_text(message.text)
+            # Moderate the text content using group config
+            result = await self.moderator.moderate_text(message.text, config=group_config)
+            
+            # If basic rules pass, check Sentiment/FUD (Premium Feature)
+            # Only check if enabled in config and confidence is high
+            if not result.is_violation and self.llm_analyzer:
+                # Check for premium flag (mock logic for now)
+                # In production: tenant = session.query(Tenant).filter(...).first(); is_premium = tenant.tier == 'guard'
+                is_premium = group_config.get("enable_sentiment_guard", False)
+                
+                if is_premium:
+                    sentiment = await self.llm_analyzer.analyze_text(message.text)
+                    if sentiment.is_danger and sentiment.confidence > 0.8:
+                        result = ModerationResult(
+                            is_violation=True,
+                            confidence=sentiment.confidence,
+                            reason=f"Detected {sentiment.category}: {sentiment.explanation}",
+                            category=sentiment.category
+                        )
             
             if result.is_violation:
                 await self.handle_violation(message, result, "text")
@@ -250,6 +347,21 @@ class TelegramModerationBot:
         
         if action_taken:
             self.stats["actions_taken"] += 1
+        
+        # Log to database
+        try:
+            LogManager.log_violation(
+                group_id=message.chat_id,
+                user_id=message.from_user.id if message.from_user else 0,
+                username=message.from_user.username if message.from_user else "Unknown",
+                violation_type=result.category or "unknown",
+                content_type=content_type,
+                confidence=result.confidence,
+                reason=result.reason or "No reason provided",
+                action_taken=action_taken or "none"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log violation to DB: {e}")
         
         # Notify GUI if callback is set
         if self.violation_callback:
