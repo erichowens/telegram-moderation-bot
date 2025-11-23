@@ -8,8 +8,8 @@ import os
 import time
 from datetime import datetime
 from typing import Optional, Callable, Dict, Any
-from telegram import Update, Message
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
 
 try:
     from .moderation import ContentModerator, ModerationResult
@@ -91,6 +91,11 @@ class TelegramModerationBot:
     
     def _setup_handlers(self):
         """Set up message handlers."""
+        # Command handlers
+        self.application.add_handler(CommandHandler("start", self.handle_start_command))
+        self.application.add_handler(CommandHandler("settings", self.handle_settings_command))
+        self.application.add_handler(CommandHandler("upgrade", self.handle_upgrade_command))
+
         # Handle text messages
         text_handler = MessageHandler(
             filters.TEXT & ~filters.COMMAND, 
@@ -112,6 +117,59 @@ class TelegramModerationBot:
         )
         self.application.add_handler(video_handler)
     
+    async def handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start command."""
+        await update.message.reply_text(
+            "🛡️ **Iron Dome Active**\n\n"
+            "I am ready to protect your community.\n"
+            "Add me to your group and make me Admin.\n\n"
+            "Commands:\n"
+            "/settings - Configure protection levels\n"
+            "/upgrade - View premium features (Sentiment Guard)"
+        )
+
+    async def handle_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /settings command."""
+        chat_id = update.effective_chat.id
+        group = ConfigManager.get_or_create_group(chat_id, update.effective_chat.title or "Private")
+        config = ConfigManager.get_group_config(chat_id)
+        
+        # Determine tier
+        # In a real app, we'd query the Tenant via the group owner
+        is_premium = False 
+        
+        text = (
+            f"⚙️ **Settings for {update.effective_chat.title}**\n\n"
+            f"🛡️ **Raid Shield**: {'✅ Active' if config.get('raid_shield', True) else '❌ Disabled'}\n"
+            f"🤬 **Toxicity Filter**: {'✅ Active' if 'toxicity' in config['enabled_features'] else '❌ Disabled'}\n"
+            f"🧠 **Sentiment Guard**: {'✅ Active' if is_premium else '🔒 Locked (Premium)'}\n\n"
+            f"Current Thresholds:\n"
+            f"- Spam: {config['spam_threshold']}\n"
+            f"- Toxicity: {config['toxicity_threshold']}\n"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🛡️ Raid Settings", callback_data="settings_raid")],
+            [InlineKeyboardButton("🧠 Upgrade to Premium", callback_data="upgrade_premium")]
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_upgrade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /upgrade command."""
+        text = (
+            "🚀 **Upgrade to Iron Dome Premium**\n\n"
+            "Get access to **Sentiment Guard**:\n"
+            "• AI FUD Detection (Detect 'Devs are selling' rumors)\n"
+            "• Competitor Shilling Protection\n"
+            "• Weekly Threat Reports\n\n"
+            "**Pricing**:\n"
+            "• $200/mo - Raid Shield (Current)\n"
+            "• $500/mo - Sentiment Guard (Premium)\n\n"
+            "Contact @SalesAdmin to upgrade."
+        )
+        await update.message.reply_text(text)
+
     async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages for moderation."""
         message = update.message
@@ -154,17 +212,19 @@ class TelegramModerationBot:
             # If basic rules pass, check Sentiment/FUD (Premium Feature)
             # Only check if enabled in config and confidence is high
             if not result.is_violation and self.llm_analyzer:
-                # In production, check tenant subscription tier here
-                # if tenant.has_sentiment_guard:
+                # Check for premium flag (mock logic for now)
+                # In production: tenant = session.query(Tenant).filter(...).first(); is_premium = tenant.tier == 'guard'
+                is_premium = group_config.get("enable_sentiment_guard", False)
                 
-                sentiment = await self.llm_analyzer.analyze_text(message.text)
-                if sentiment.is_danger and sentiment.confidence > 0.8:
-                    result = ModerationResult(
-                        is_violation=True,
-                        confidence=sentiment.confidence,
-                        reason=f"Detected {sentiment.category}: {sentiment.explanation}",
-                        category=sentiment.category
-                    )
+                if is_premium:
+                    sentiment = await self.llm_analyzer.analyze_text(message.text)
+                    if sentiment.is_danger and sentiment.confidence > 0.8:
+                        result = ModerationResult(
+                            is_violation=True,
+                            confidence=sentiment.confidence,
+                            reason=f"Detected {sentiment.category}: {sentiment.explanation}",
+                            category=sentiment.category
+                        )
             
             if result.is_violation:
                 await self.handle_violation(message, result, "text")
